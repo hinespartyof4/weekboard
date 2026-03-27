@@ -1,0 +1,100 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f1f5f1;
+  --foreground: #223036;
+  --card: rgba(245, 249, 245, 0.94);
+  --card-foreground: #223036;
+  --primary: #25373c;
+  --primary-foreground: #f4f7f3;
+  --secondary: #dfe9dd;
+  --secondary-foreground: #27353a;
+  --muted: #e7ede6;
+  --muted-foreground: #5f6e69;
+  --accent: #a8cb9b;
+  --accent-foreground: #203037;
+  --border: rgba(37, 55, 60, 0.12);
+  --input: rgba(37, 55, 60, 0.12);
+  --ring: rgba(168, 203, 155, 0.35);
+  --radius: 1.4rem;
+  --font-sans: "Avenir Next", "Segoe UI", sans-serif;
+  --font-serif: "Iowan Old Style", "Palatino Linotype", serif;
+  --shadow-card: 0 18px 46px -30px rgba(28, 41, 45, 0.22);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--card);
+  --color-popover-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 0.4rem);
+  --radius-md: calc(var(--radius) - 0.2rem);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 0.5rem);
+  --font-sans: var(--font-sans);
+  --font-serif: var(--font-serif);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100vh;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+* {
+  border-color: var(--border);
+}
+
+::selection {
+  background: rgba(168, 203, 155, 0.28);
+}
+
+@layer base {
+  h1,
+  h2,
+  h3,
+  h4 {
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+}
+
+@layer components {
+  .page-shell {
+    @apply mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8;
+  }
+
+  .panel {
+    @apply rounded-[calc(var(--radius)+0.5rem)] border border-border/80 bg-card/90 backdrop-blur-sm;
+    box-shadow: var(--shadow-card);
+  }
+
+  .panel-muted {
+    @apply rounded-[calc(var(--radius)-0.1rem)] border border-border/80 bg-card/95;
+  }
+
+  .eyebrow {
+    @apply text-[0.72rem] font-semibold uppercase tracking-[0.24em] text-muted-foreground;
+  }
+}
