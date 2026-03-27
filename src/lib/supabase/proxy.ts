@@ -19,52 +19,70 @@ export async function updateSession(request: NextRequest) {
     });
   }
 
+  const pathname = request.nextUrl.pathname;
+  const isAppRoute = pathname === "/app" || pathname.startsWith("/app/");
+  const isOnboardingRoute = pathname === "/onboarding";
   let response = NextResponse.next({
     request,
   });
 
-  const supabase = createServerClient(getSupabaseUrl(), getSupabasePublishableKey(), {
-    cookies: {
-      getAll() {
-        return request.cookies.getAll();
+  try {
+    const supabase = createServerClient(getSupabaseUrl(), getSupabasePublishableKey(), {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll();
+        },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
+
+          response = NextResponse.next({
+            request,
+          });
+
+          cookiesToSet.forEach(({ name, value, options }) =>
+            response.cookies.set(name, value, options),
+          );
+        },
       },
-      setAll(cookiesToSet) {
-        cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
+    });
 
-        response = NextResponse.next({
-          request,
-        });
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
-        cookiesToSet.forEach(({ name, value, options }) =>
-          response.cookies.set(name, value, options),
+    if (!user && (isAppRoute || isOnboardingRoute)) {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = "/login";
+
+      if (pathname !== "/app" || request.nextUrl.search) {
+        redirectUrl.searchParams.set(
+          "next",
+          getSafeRedirectPath(`${pathname}${request.nextUrl.search}`),
         );
-      },
-    },
-  });
+      }
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  const pathname = request.nextUrl.pathname;
-  const isAppRoute = pathname === "/app" || pathname.startsWith("/app/");
-  const isOnboardingRoute = pathname === "/onboarding";
-
-  if (!user && (isAppRoute || isOnboardingRoute)) {
-    const redirectUrl = request.nextUrl.clone();
-    redirectUrl.pathname = "/login";
-
-    if (pathname !== "/app" || request.nextUrl.search) {
-      redirectUrl.searchParams.set(
-        "next",
-        getSafeRedirectPath(`${pathname}${request.nextUrl.search}`),
-      );
+      const redirectResponse = NextResponse.redirect(redirectUrl);
+      applySupabaseCookies(response, redirectResponse);
+      return redirectResponse;
     }
 
-    const redirectResponse = NextResponse.redirect(redirectUrl);
-    applySupabaseCookies(response, redirectResponse);
-    return redirectResponse;
-  }
+    return response;
+  } catch (error) {
+    console.error("Supabase session refresh failed in proxy.", error);
 
-  return response;
+    if (isAppRoute || isOnboardingRoute) {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = "/login";
+      redirectUrl.searchParams.set(
+        "message",
+        "Auth is still being configured for this environment. You can use preview mode while setup finishes.",
+      );
+
+      const redirectResponse = NextResponse.redirect(redirectUrl);
+      applySupabaseCookies(response, redirectResponse);
+      return redirectResponse;
+    }
+
+    return response;
+  }
 }

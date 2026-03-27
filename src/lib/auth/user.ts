@@ -6,25 +6,34 @@ import { isPreviewModeEnabled, isSupabaseConfigured } from "@/lib/supabase/env";
 import { createClient } from "@/lib/supabase/server";
 
 async function getActiveMembershipRow(userId: string) {
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("household_members")
-    .select("id, household_id, role, status")
-    .eq("user_id", userId)
-    .eq("status", "active")
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+  try {
+    const supabase = await createClient();
+    const { data } = await supabase
+      .from("household_members")
+      .select("id, household_id, role, status")
+      .eq("user_id", userId)
+      .eq("status", "active")
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
 
-  return data;
+    return data;
+  } catch (error) {
+    console.error("Failed to read household membership.", error);
+    return null;
+  }
 }
 
 async function acceptPendingInvitationIfPossible() {
-  const supabase = await createClient();
-  const { error } = await supabase.rpc("accept_pending_household_invitation");
+  try {
+    const supabase = await createClient();
+    const { error } = await supabase.rpc("accept_pending_household_invitation");
 
-  if (error) {
-    throw new Error(error.message);
+    if (error) {
+      throw new Error(error.message);
+    }
+  } catch (error) {
+    console.error("Failed to accept pending household invitation.", error);
   }
 }
 
@@ -39,12 +48,17 @@ export async function getCurrentUser(options?: { allowPreview?: boolean }) {
     return null;
   }
 
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
-  return user;
+    return user;
+  } catch (error) {
+    console.error("Failed to read the current Supabase user.", error);
+    return null;
+  }
 }
 
 export async function getCurrentMembership() {
