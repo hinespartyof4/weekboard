@@ -382,3 +382,4 @@ Set these values in `.env.local` before wiring real integrations:
 - Add server actions and schema validation for create/update flows.
 - Wire Stripe billing to `Billing` and plan gating.
 - Add analytics, email, and AI workflows.
+# weekboard
