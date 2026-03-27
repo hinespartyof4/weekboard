@@ -24,7 +24,7 @@ export function AppHeader() {
             Keep the week under control.
           </h1>
           <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-            <span className="inline-flex items-center gap-2">
+            <span className="inline-flex items-center gap-2" suppressHydrationWarning>
               <CalendarDays className="size-4" />
               {today}
             </span>
