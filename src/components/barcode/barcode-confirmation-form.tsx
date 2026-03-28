@@ -44,6 +44,24 @@ export function BarcodeConfirmationForm({
   onScanAgain,
   onManualBarcode,
 }: BarcodeConfirmationFormProps) {
+  const lookupBadgeLabel =
+    lookupMode === "mock"
+      ? "Sample match"
+      : lookupMode === "live"
+        ? lookupProduct
+          ? "Live catalog match"
+          : "Live catalog checked"
+        : null;
+
+  const lookupSummary =
+    lookupMode === "mock"
+      ? "This item is using Weekboard sample data so you can test the flow locally."
+      : lookupMode === "live"
+        ? lookupProduct
+          ? "This item came back from the live product catalog."
+          : "Weekboard checked the live product catalog, but no product match came back."
+        : "Review the details once, then send the item to the right place.";
+
   return (
     <form onSubmit={onSubmit} className="space-y-4">
       <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
@@ -67,12 +85,11 @@ export function BarcodeConfirmationForm({
               </div>
               <div className="min-w-0 flex-1 space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
-                  {lookupMode ? (
-                    <Badge variant="secondary">
-                      {lookupMode === "mock" ? "Mock lookup" : "Product lookup"}
-                    </Badge>
-                  ) : null}
+                  {lookupBadgeLabel ? <Badge variant="secondary">{lookupBadgeLabel}</Badge> : null}
                   {lookupProduct?.brand ? <Badge variant="secondary">{lookupProduct.brand}</Badge> : null}
+                  {lookupProduct?.source === "barcodelookup" ? (
+                    <Badge variant="secondary">Barcode Lookup</Badge>
+                  ) : null}
                 </div>
                 <div className="space-y-1">
                   <p className="text-base font-medium text-foreground">
@@ -85,9 +102,7 @@ export function BarcodeConfirmationForm({
                 {notice ? (
                   <p className="text-sm leading-6 text-muted-foreground">{notice}</p>
                 ) : (
-                  <p className="text-sm leading-6 text-muted-foreground">
-                    Review the details once, then send the item to the right place.
-                  </p>
+                  <p className="text-sm leading-6 text-muted-foreground">{lookupSummary}</p>
                 )}
               </div>
             </div>
@@ -235,8 +250,8 @@ export function BarcodeConfirmationForm({
             <div className="rounded-[1.75rem] border border-border bg-white/70 p-5">
               <p className="text-sm font-medium text-foreground">Testing locally</p>
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                No live barcode API is configured, so Weekboard is using built-in sample
-                product matches for local testing.
+                This environment is using built-in sample product matches. Add a real
+                barcode lookup API key when you want genuine catalog matches.
               </p>
             </div>
           ) : null}

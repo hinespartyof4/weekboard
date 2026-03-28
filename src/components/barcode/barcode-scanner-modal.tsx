@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
-import { BarcodeFormat, BrowserMultiFormatReader, type IScannerControls } from "@zxing/browser";
+import {
+  BarcodeFormat,
+  BrowserCodeReader,
+  BrowserMultiFormatReader,
+  type IScannerControls,
+} from "@zxing/browser";
 import {
   ArrowLeft,
   CameraOff,
@@ -65,6 +70,8 @@ const storageLocationOptions: Array<{ value: StorageLocation; label: string }> =
   { value: "other", label: "Other" },
 ];
 
+const scannerStartTimeoutMs = 4500;
+
 function getInitialValues(destination: BarcodeDestination): BarcodeConfirmationValues {
   return {
     destination,
@@ -80,12 +87,20 @@ function getInitialValues(destination: BarcodeDestination): BarcodeConfirmationV
   };
 }
 
-function getLookupMessage(product: BarcodeLookupProduct | null) {
+function getLookupMessage(product: BarcodeLookupProduct | null, mode: "mock" | "live" | null) {
   if (product) {
-    return null;
+    if (mode === "mock") {
+      return "Matched from Weekboard sample data. This is useful for local testing, but it is not a live catalog result.";
+    }
+
+    return "Matched from the live product catalog. Review the details once, then save it to the right place.";
   }
 
-  return "No product match came back. You can still enter the item details below and keep going.";
+  if (mode === "mock") {
+    return "No sample product match came back. You can still enter the item details below and keep going.";
+  }
+
+  return "No product match came back from the live catalog. You can still enter the item details below and keep going.";
 }
 
 function isPermissionError(error: unknown) {
@@ -94,6 +109,161 @@ function isPermissionError(error: unknown) {
 
 function isCameraUnavailableError(error: unknown) {
   return error instanceof Error && error.name === "NotFoundError";
+}
+
+function stopMediaStream(stream: MediaStream | null) {
+  if (!stream) {
+    return;
+  }
+
+  for (const track of stream.getTracks()) {
+    track.stop();
+  }
+}
+
+function resetVideoElement(videoElement: HTMLVideoElement | null) {
+  if (!videoElement) {
+    return;
+  }
+
+  try {
+    videoElement.pause();
+  } catch {
+    // Pause can throw while the element is tearing down on mobile Safari.
+  }
+
+  videoElement.srcObject = null;
+  videoElement.removeAttribute("src");
+  videoElement.load();
+}
+
+function getPreferredVideoInput(
+  devices: MediaDeviceInfo[],
+  currentDeviceId: string | null,
+) {
+  if (!devices.length) {
+    return null;
+  }
+
+  const rearFacingKeywords = ["back", "rear", "environment", "wide", "ultra"];
+
+  const bestRear = devices.find((device) =>
+    rearFacingKeywords.some((keyword) => device.label.toLowerCase().includes(keyword)),
+  );
+
+  if (bestRear) {
+    return bestRear;
+  }
+
+  return devices.find((device) => device.deviceId !== currentDeviceId) ?? devices[0];
+}
+
+async function waitForVideoPreview(videoElement: HTMLVideoElement) {
+  videoElement.muted = true;
+  videoElement.playsInline = true;
+  videoElement.autoplay = true;
+  videoElement.setAttribute("muted", "true");
+  videoElement.setAttribute("playsinline", "true");
+  videoElement.setAttribute("autoplay", "true");
+
+  await new Promise<void>((resolve, reject) => {
+    if (videoElement.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && videoElement.videoWidth > 0) {
+      void videoElement
+        .play()
+        .then(() => resolve())
+        .catch((error) => reject(error));
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      cleanup();
+      reject(new Error("The camera opened, but the live preview did not start."));
+    }, scannerStartTimeoutMs);
+
+    function cleanup() {
+      window.clearTimeout(timeoutId);
+      videoElement.removeEventListener("loadedmetadata", handleReady);
+      videoElement.removeEventListener("canplay", handleReady);
+    }
+
+    function handleReady() {
+      void videoElement
+        .play()
+        .then(() => {
+          cleanup();
+          resolve();
+        })
+        .catch((error) => {
+          cleanup();
+          reject(error);
+        });
+    }
+
+    videoElement.addEventListener("loadedmetadata", handleReady);
+    videoElement.addEventListener("canplay", handleReady);
+  });
+}
+
+async function requestScannerStream(deviceId?: string) {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error("Camera access is not available in this browser.");
+  }
+
+  const baseConstraints = {
+    width: { ideal: 1280 },
+    height: { ideal: 720 },
+    frameRate: { ideal: 30, max: 30 },
+  } satisfies MediaTrackConstraints;
+
+  const candidates: Array<MediaTrackConstraints | true> = deviceId
+    ? [{ deviceId: { exact: deviceId }, ...baseConstraints }]
+    : [
+        { facingMode: { exact: "environment" }, ...baseConstraints },
+        { facingMode: { ideal: "environment" }, ...baseConstraints },
+        baseConstraints,
+        true,
+      ];
+
+  let lastError: unknown = null;
+
+  for (const video of candidates) {
+    try {
+      return await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video,
+      });
+    } catch (error) {
+      if (isPermissionError(error) || isCameraUnavailableError(error)) {
+        throw error;
+      }
+
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("The scanner could not start on this device.");
+}
+
+async function prepareScannerStream() {
+  const initialStream = await requestScannerStream();
+  const currentDeviceId = initialStream.getVideoTracks()[0]?.getSettings().deviceId ?? null;
+
+  try {
+    const devices = await BrowserCodeReader.listVideoInputDevices();
+    const preferredDevice = getPreferredVideoInput(devices, currentDeviceId);
+
+    if (!preferredDevice?.deviceId || preferredDevice.deviceId === currentDeviceId) {
+      return initialStream;
+    }
+
+    const preferredStream = await requestScannerStream(preferredDevice.deviceId);
+    stopMediaStream(initialStream);
+    return preferredStream;
+  } catch {
+    return initialStream;
+  }
 }
 
 export function BarcodeScannerModal({
@@ -106,6 +276,7 @@ export function BarcodeScannerModal({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const controlsRef = useRef<IScannerControls | null>(null);
   const readerRef = useRef<BrowserMultiFormatReader | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const hasResolvedScanRef = useRef(false);
   const [stage, setStage] = useState<ScanStage>("scan");
   const [cameraState, setCameraState] = useState<CameraState>("requesting");
@@ -124,8 +295,11 @@ export function BarcodeScannerModal({
   const stopScanner = useCallback(() => {
     controlsRef.current?.stop();
     controlsRef.current = null;
+    stopMediaStream(streamRef.current);
+    streamRef.current = null;
     readerRef.current = null;
     hasResolvedScanRef.current = false;
+    resetVideoElement(videoRef.current);
     setCameraState("idle");
   }, []);
 
@@ -201,7 +375,7 @@ export function BarcodeScannerModal({
             normalizedBarcode,
             result.product,
             result.mode,
-            getLookupMessage(result.product),
+            getLookupMessage(result.product, result.mode),
           );
         } catch (error) {
           setErrorMessage(error instanceof Error ? error.message : "Unable to look up that barcode.");
@@ -232,47 +406,67 @@ export function BarcodeScannerModal({
     }
 
     let cancelled = false;
-    const reader = new BrowserMultiFormatReader();
+    const videoElement = videoRef.current;
 
-    reader.possibleFormats = supportedFormats;
-    readerRef.current = reader;
+    async function startScanner() {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setStage("camera_unavailable");
+        setErrorMessage("Camera access is not available in this browser.");
+        return;
+      }
 
-    void reader
-      .decodeFromConstraints(
-        {
-          audio: false,
-          video: {
-            facingMode: { ideal: "environment" },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-          },
-        },
-        videoRef.current,
-        (result, _error, controls) => {
-          controlsRef.current = controls;
+      setCameraState("requesting");
+      setErrorMessage(null);
 
-          if (cancelled) {
-            return;
-          }
+      try {
+        const stream = await prepareScannerStream();
 
-          setCameraState("ready");
+        if (cancelled) {
+          stopMediaStream(stream);
+          return;
+        }
 
-          if (!result || hasResolvedScanRef.current) {
+        streamRef.current = stream;
+        videoElement.srcObject = stream;
+        await waitForVideoPreview(videoElement);
+
+        if (cancelled) {
+          stopMediaStream(stream);
+          return;
+        }
+
+        setCameraState("ready");
+
+        const reader = new BrowserMultiFormatReader();
+        reader.possibleFormats = supportedFormats;
+        readerRef.current = reader;
+
+        const controls = await reader.decodeFromStream(stream, videoElement, (result, _error, activeControls) => {
+          controlsRef.current = activeControls;
+
+          if (cancelled || !result || hasResolvedScanRef.current) {
             return;
           }
 
           hasResolvedScanRef.current = true;
           void handleLookup(result.getText());
-        },
-      )
-      .then((controls) => {
+        });
+
+        if (cancelled) {
+          controls.stop();
+          return;
+        }
+
         controlsRef.current = controls;
-        setCameraState("ready");
-      })
-      .catch((error: unknown) => {
+      } catch (error) {
         if (cancelled) {
           return;
         }
+
+        stopMediaStream(streamRef.current);
+        streamRef.current = null;
+        resetVideoElement(videoElement);
+        setCameraState("idle");
 
         if (isPermissionError(error)) {
           setStage("permission_denied");
@@ -294,7 +488,10 @@ export function BarcodeScannerModal({
             ? error.message
             : "The scanner could not start on this device.",
         );
-      });
+      }
+    }
+
+    void startScanner();
 
     return () => {
       cancelled = true;
@@ -399,8 +596,10 @@ export function BarcodeScannerModal({
                 <video
                   ref={videoRef}
                   className="aspect-[4/5] w-full object-cover sm:aspect-[16/10]"
+                  autoPlay
                   muted
                   playsInline
+                  disablePictureInPicture
                 />
                 <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-slate-950/35 via-transparent to-slate-950/45" />
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
@@ -421,7 +620,7 @@ export function BarcodeScannerModal({
                   <div>
                     <p className="text-sm font-medium">Center the barcode in the frame</p>
                     <p className="text-xs text-white/75">
-                      Optimized for UPC-A, UPC-E, EAN-8, and EAN-13.
+                      Optimized for UPC-A, UPC-E, EAN-8, and EAN-13. After a match, Weekboard will show whether it came from the live catalog or local sample data.
                     </p>
                   </div>
                   <div className="flex size-11 items-center justify-center rounded-full bg-white/12">
@@ -431,6 +630,10 @@ export function BarcodeScannerModal({
               </div>
 
               <div className="flex flex-col gap-3 sm:flex-row">
+                <Button type="button" onClick={resetFlow}>
+                  <RefreshCw className="size-4" />
+                  Restart camera
+                </Button>
                 <Button type="button" variant="outline" onClick={openManualBarcode}>
                   <Search className="size-4" />
                   Enter barcode manually
@@ -452,7 +655,7 @@ export function BarcodeScannerModal({
                   <div className="space-y-1">
                     <p className="text-sm font-medium text-foreground">Manual barcode entry</p>
                     <p className="text-sm leading-6 text-muted-foreground">
-                      If camera access is unavailable, enter the barcode and Weekboard will try a product match.
+                      If camera access is unavailable, enter the barcode and Weekboard will try a product match. The result will show whether it came from the live catalog or local sample data.
                     </p>
                   </div>
                 </div>
@@ -525,7 +728,7 @@ export function BarcodeScannerModal({
                 </div>
               </div>
               <div className="flex flex-col gap-3 sm:flex-row">
-                <Button type="button" onClick={() => setStage("scan")}>
+                <Button type="button" onClick={resetFlow}>
                   <RefreshCw className="size-4" />
                   Retry scanner
                 </Button>
@@ -556,6 +759,10 @@ export function BarcodeScannerModal({
                 </div>
               </div>
               <div className="flex flex-col gap-3 sm:flex-row">
+                <Button type="button" variant="outline" onClick={resetFlow}>
+                  <RefreshCw className="size-4" />
+                  Retry scanner
+                </Button>
                 <Button type="button" onClick={openManualBarcode}>
                   <Search className="size-4" />
                   Enter barcode manually
@@ -583,7 +790,7 @@ export function BarcodeScannerModal({
                 </div>
               </div>
               <div className="flex flex-col gap-3 sm:flex-row">
-                <Button type="button" onClick={() => setStage("scan")}>
+                <Button type="button" onClick={resetFlow}>
                   <RefreshCw className="size-4" />
                   Retry scanner
                 </Button>
